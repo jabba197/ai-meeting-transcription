@@ -154,8 +154,12 @@ def upload():
             mime_type, _ = mimetypes.guess_type(file_path)
             if not mime_type:
                 # Fallback or raise error if mime type can't be guessed
-                mime_type = 'application/octet-stream' # Generic fallback
-                current_app.logger.warning(f"Could not guess mime type for {filename}. Using fallback: {mime_type}")
+                if filename.lower().endswith('.m4a'):
+                    mime_type = 'audio/mp4' # Explicitly set for .m4a
+                    current_app.logger.info(f"Guessed mime type for {filename} as {mime_type} based on .m4a extension.")
+                else:
+                    mime_type = 'application/octet-stream' # Generic fallback for others
+                    current_app.logger.warning(f"Could not guess mime type for {filename}. Using fallback: {mime_type}")
             else:
                 current_app.logger.info(f"Guessed mime type for {filename}: {mime_type}")
 

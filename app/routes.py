@@ -150,8 +150,17 @@ def upload():
             current_app.logger.info(f"Uploading {file_path} to Gemini Files API...")
             # Add a small delay before upload, sometimes helps with file system sync
             time.sleep(0.5)
+            # Guess mime type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                # Fallback or raise error if mime type can't be guessed
+                mime_type = 'application/octet-stream' # Generic fallback
+                current_app.logger.warning(f"Could not guess mime type for {filename}. Using fallback: {mime_type}")
+            else:
+                current_app.logger.info(f"Guessed mime type for {filename}: {mime_type}")
+
             # Use top-level function genai.upload_file
-            uploaded_file_resource = genai.upload_file(path=file_path)
+            uploaded_file_resource = genai.upload_file(path=file_path, mime_type=mime_type)
             current_app.logger.info(f"File uploaded successfully. Name: {uploaded_file_resource.name}, URI: {uploaded_file_resource.uri}")
 
             # Wait for the file to be processed

@@ -57,6 +57,34 @@ def save_context(context_data):
     with open(context_path, 'w') as f:
         json.dump(context_data, f)
 
+def load_external_context():
+    """Loads context from .md files in the directory specified by CONTEXT_INPUT_PATH."""
+    context_input_path = current_app.config.get('CONTEXT_INPUT_PATH')
+    external_context = ""
+    if context_input_path and os.path.isdir(context_input_path):
+        current_app.logger.info(f"Loading external context from: {context_input_path}")
+        try:
+            for filename in os.listdir(context_input_path):
+                if filename.lower().endswith('.md'):
+                    file_path = os.path.join(context_input_path, filename)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            external_context += f"\n\n--- Context from {filename} ---\n{f.read()}"
+                        current_app.logger.debug(f"Loaded context from: {filename}")
+                    except Exception as read_err:
+                        current_app.logger.warning(f"Could not read file {filename} in context path: {read_err}")
+            if external_context:
+                current_app.logger.info("Successfully loaded external context.")
+            else:
+                current_app.logger.info("No .md files found in the context path.")
+        except Exception as list_err:
+            current_app.logger.error(f"Error accessing context directory {context_input_path}: {list_err}")
+    elif context_input_path:
+        current_app.logger.warning(f"CONTEXT_INPUT_PATH ('{context_input_path}') is not a valid directory. Skipping external context.")
+    else:
+        current_app.logger.info("CONTEXT_INPUT_PATH not configured. Skipping external context.")
+    return external_context
+
 # Routes
 @main_bp.route('/')
 def index():
@@ -145,14 +173,18 @@ def upload():
             context = get_saved_context()
             business_context = context.get('business_context', '')
             custom_instructions = context.get('custom_instructions', '')
-            system_prompt = f"""You are an AI assistant specialized in summarizing meeting audio based on provided business context and instructions.
+            external_context = load_external_context() # Load context from files
+
+            system_prompt = f"""You are an AI assistant specialized in summarizing meeting audio based on provided business context, external documents, and instructions.
             **Business Context:**
             {business_context}
 
-            **Custom Instructions:**
+            **External Context from Documents:**
+            {external_context if external_context else 'No external context provided.'}
+
+            **Custom Instructions for Summarization:**
             {custom_instructions}
             """
-
             user_prompt_content = user_prompt if user_prompt else '(No specific request provided, generate a standard concise summary following the custom instructions)'
 
             # Combine prompt text and the uploaded file resource
@@ -200,18 +232,40 @@ def upload():
                      current_app.logger.info(f"Deleting uploaded file {uploaded_file_resource.name} from Gemini service...")
                      # Use top-level function genai.delete_file
                      genai.delete_file(name=uploaded_file_resource.name)
-                     current_app.logger.info(f"Successfully deleted file {uploaded_file_resource.name}.")
-                 except Exception as delete_e:
-                     current_app.logger.error(f"Error deleting file {uploaded_file_resource.name} from Gemini: {delete_e}")
-                     # Non-critical error, maybe just log it
+                     current_app.logger.info(f"Successfully deleted {uploaded_file_resource.name}.")
+                 except Exception as delete_err:
+                     current_app.logger.error(f"Failed to delete file {uploaded_file_resource.name} from Gemini: {delete_err}")
 
             # Delete the local temporary file
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
                     current_app.logger.info(f"Deleted local temporary file: {file_path}")
-                except OSError as delete_e:
-                    current_app.logger.error(f"Error deleting local file {file_path}: {delete_e}")
+                except Exception as e:
+                    current_app.logger.error(f"Error deleting local file {file_path}: {e}")
+
+            # --- Save Summary to File (New Feature) --- 
+            if summary and not error_message: # Only save if summary exists and no error occurred
+                summary_output_path_config = current_app.config.get('SUMMARY_OUTPUT_PATH')
+                if summary_output_path_config:
+                    try:
+                        # Ensure the output directory exists
+                        os.makedirs(summary_output_path_config, exist_ok=True)
+
+                        # Create the output filename (original name + .md)
+                        base_filename, _ = os.path.splitext(original_filename)
+                        output_filename = f"{base_filename}.md"
+                        full_output_path = os.path.join(summary_output_path_config, output_filename)
+
+                        # Write the summary to the file
+                        with open(full_output_path, 'w', encoding='utf-8') as f_out:
+                            f_out.write(summary)
+                        current_app.logger.info(f"Summary successfully saved to: {full_output_path}")
+
+                    except Exception as save_err:
+                        current_app.logger.error(f"Failed to save summary to {summary_output_path_config}: {save_err}")
+                else:
+                    current_app.logger.warning("SUMMARY_OUTPUT_PATH not configured. Skipping saving summary to file.")
 
         # Prepare data for the results page
         result_data = {
@@ -316,11 +370,15 @@ def transcribe():
             context = get_saved_context()
             business_context = context.get('business_context', '')
             custom_instructions = context.get('custom_instructions', '')
-            system_prompt = f"""You are an AI assistant specialized in summarizing meeting transcripts based on provided business context and instructions.
+            external_context = load_external_context() # Load context from files
+            system_prompt = f"""You are an AI assistant specialized in summarizing meeting transcripts based on provided business context, external documents, and instructions.
             **Business Context:**
             {business_context}
 
-            **Custom Instructions:**
+            **External Context from Documents:**
+            {external_context if external_context else 'No external context provided.'}
+
+            **Custom Instructions for Summarization:**
             {custom_instructions}
             """
             user_message = f"""Please summarize the following meeting transcript accurately and concisely, following the provided instructions. Ensure the output uses basic markdown (like bolding key points **like this**, using italics *like this*, and potentially section headers ## Like This ## if appropriate).

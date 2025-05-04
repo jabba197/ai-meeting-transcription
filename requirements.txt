@@ -1,0 +1,17 @@
+Flask
+Werkzeug
+Flask-WTF
+python-dotenv
+requests
+openai
+google-generativeai
+python-magic
+gunicorn
+Flask-Cors
+numpy
+pydub
+SoundFile
+# opensoundscape # Temporarily removed again to debug load failure
+# Removed version pins to allow uv to resolve dependencies
+# If you need specific versions, consider installing them in a separate environment
+# opensoundscape removed due to Python 3.12 incompatibility (via pathtools)

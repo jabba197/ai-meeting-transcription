@@ -1,0 +1,281 @@
+/* Base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Roboto', sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f5f7fa;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    padding: 30px 0;
+}
+
+header h1 {
+    color: #2a5885;
+    margin-bottom: 10px;
+}
+
+header p {
+    color: #666;
+}
+
+/* Main content sections */
+main {
+    display: grid;
+    gap: 30px;
+}
+
+section {
+    background: white;
+    border-radius: 8px;
+    padding: 25px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+h2 {
+    color: #2a5885;
+    margin-bottom: 20px;
+    font-size: 1.5rem;
+}
+
+/* File upload styles */
+.file-input-container {
+    margin-bottom: 20px;
+}
+
+.file-input-label {
+    display: flex;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+#file-name {
+    flex-grow: 1;
+    padding: 12px 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.browse-btn {
+    padding: 12px 20px;
+    background-color: #2a5885;
+    color: white;
+    text-align: center;
+    font-weight: 500;
+}
+
+/* Form elements */
+.prompt-container {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #555;
+}
+
+textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 14px;
+    min-height: 100px;
+}
+
+button {
+    padding: 12px 25px;
+    background-color: #2a5885;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 16px;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #3a6fa5;
+}
+
+button:disabled {
+    background-color: #a0a0a0;
+    cursor: not-allowed;
+}
+
+/* Results section */
+.results-section {
+    display: block;
+}
+
+.result-tabs {
+    display: flex;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #ddd;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    background-color: transparent;
+    color: #555;
+    border: none;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.tab-btn.active {
+    color: #2a5885;
+    border-bottom-color: #2a5885;
+}
+
+.tab-content {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 4px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+.result-text {
+    white-space: pre-wrap;
+    line-height: 1.7;
+}
+
+/* Remove extra space below list items in summary */
+#summary-text ul li p {
+    margin-bottom: 0;
+}
+
+/* Style for the copy button */
+.copy-button {
+    background-color: #e0e0e0;
+    color: #333;
+    border: 1px solid #ccc;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    float: right; /* Position to the top right */
+    margin-left: 10px; /* Add some space if needed */
+    transition: background-color 0.2s;
+}
+
+.copy-button:hover {
+    background-color: #d0d0d0;
+}
+
+/* Context section */
+.context-info {
+    margin-bottom: 15px;
+    color: #666;
+    font-size: 14px;
+}
+
+#save-context-btn {
+    margin-top: 10px;
+}
+
+/* Loading indicator */
+.loading {
+    text-align: center;
+    margin-top: 2rem;
+    padding: 1rem;
+    background-color: #f0f0f0;
+    border-radius: var(--border-radius);
+}
+
+.loading .spinner {
+    display: none; /* Hide spinner if progress bar is shown */
+}
+
+.loading p {
+    margin-top: 0.5rem;
+    color: #555;
+}
+
+/* Progress Bar Styles */
+.progress-container {
+    width: 80%;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+    margin: 1rem auto 0.5rem; /* Center and add margin */
+    height: 20px; /* Height of the progress bar */
+    overflow: hidden; /* Ensure inner bar stays within container */
+}
+
+.progress-bar {
+    width: 0%; /* Start with 0 width */
+    height: 100%;
+    background-color: #4CAF50; /* Green progress color */
+    border-radius: 4px;
+    text-align: center; /* Center text if needed */
+    line-height: 20px; /* Match container height */
+    color: white;
+    transition: width 0.4s ease-in-out; /* Smooth transition for width changes */
+}
+
+#progress-status {
+    font-weight: 500;
+    color: #333;
+}
+
+/* Utility classes */
+.hidden {
+    display: none !important;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px 0;
+    color: #666;
+    font-size: 14px;
+    margin-top: 30px;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+    
+    header {
+        padding: 20px 0;
+    }
+    
+    main {
+        gap: 20px;
+    }
+    
+    section {
+        padding: 20px;
+    }
+}

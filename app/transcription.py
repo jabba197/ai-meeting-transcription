@@ -90,20 +90,19 @@ def transcribe_audio(audio_file_path: str) -> str | None:
         # Clean up the uploaded file *after* getting the response
         logger.info(f"Transcription response received. Deleting uploaded file: {uploaded_file.name}")
         genai.delete_file(uploaded_file.name)
-        uploaded_file = None # Reset after deletion
+        uploaded_file = None  # Reset after deletion
 
-        if response.parts:
-            transcript = response.text
+        # Handle transcription response via candidates and content parts
+        if response.candidates and response.candidates[0].content.parts:
+            parts = response.candidates[0].content.parts
+            transcript = ''.join(part.text for part in parts)
+            # Remove double quotes from the transcript before returning
+            final_transcript = transcript.replace('"', '')
             logger.info("Transcription successful.")
-            return transcript
+            return final_transcript
         else:
-            logger.error("No transcription data received in response parts.")
-            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                logger.warning(f"Prompt Feedback: {response.prompt_feedback}")
-            if hasattr(response, 'candidates') and not response.candidates:
-                 logger.warning("No candidates generated. Check safety settings or prompt.")
-            # Consider logging the full response for debugging if needed
-            # logger.debug(f"Full response: {response}")
+            logger.error("No transcription content found in response candidates.")
+            logger.debug(f"Full transcription response: {response}")
             return None
 
     except Exception as e:
@@ -119,7 +118,7 @@ def transcribe_audio(audio_file_path: str) -> str | None:
 
 if __name__ == '__main__':
     # Example usage setup
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s') # Moved to create_app
     
     test_audio_path = "test_audio.mp3" # <--- CHANGE THIS
 
@@ -133,9 +132,9 @@ if __name__ == '__main__':
         logger.info(f"Transcription process took {end_time - start_time:.2f} seconds.")
 
         if transcript_result:
-            print("\n--- Transcript ---") # Use print for direct output here
-            print(transcript_result)
-            print("--- End Transcript ---")
+            logger.info("\n--- Transcript ---")
+            logger.info(f"Transcript result: {transcript_result}")
+            logger.info("--- End Transcript ---")
         else:
             logger.info("\nTranscription failed (check logs for details).")
     else:

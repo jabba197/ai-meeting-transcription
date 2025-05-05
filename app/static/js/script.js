@@ -86,6 +86,24 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // Helper function to programmatically activate a tab
+    function activateTab(tabName) {
+        console.log(`Activating tab: ${tabName}`);
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabPanes.forEach(pane => pane.classList.remove('active'));
+
+        const targetButton = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+        const targetPane = document.getElementById(`${tabName}-content`);
+
+        if (targetButton && targetPane) {
+            targetButton.classList.add('active');
+            targetPane.classList.add('active');
+            console.log(`Tab ${tabName} activated successfully.`);
+        } else {
+            console.error(`Could not find button or pane for tab: ${tabName}`);
+        }
+    }
+
     // Save context functionality
     saveContextButton.addEventListener('click', function() {
         const contextData = {
@@ -177,9 +195,9 @@ document.addEventListener('DOMContentLoaded', function() {
         uploadFormData.append('file', audioFileInput.files[0]); // Ensure key matches Flask ('file')
         uploadFormData.append('user_prompt', customPrompt.value); // Add user prompt
 
-        updateProgress(10, 'Uploading audio...');
+        updateProgress(10, 'Uploading and processing...');
 
-        // Step 1: Upload the file
+        // Step 1: Upload the file, get transcript, RAG context, and summary in one go
         fetch('/upload', {
             method: 'POST',
             body: uploadFormData // Send FormData directly
@@ -188,84 +206,42 @@ document.addEventListener('DOMContentLoaded', function() {
              if (!response.ok) {
                  // Try to parse error JSON, otherwise throw generic HTTP error
                  return response.json().then(err => {
-                     throw new Error(err.error || `Upload failed: ${response.status}`);
-                 }).catch(() => {
-                     throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+                     // Include transcript if available in the error response
+                     const errorMsg = err.error || `Processing failed: ${response.status}`;
+                     const transcriptOnError = err.transcript;
+                     throw { message: errorMsg, transcript: transcriptOnError }; // Throw an object
+                 }).catch((jsonParseError) => {
+                      // If JSON parsing fails, throw generic HTTP error
+                     throw { message: `Processing failed: ${response.status} ${response.statusText}` }; 
                  });
              }
              return response.json(); // Parse the JSON response from /upload
         })
-        .then(uploadData => {
-            if (!uploadData.filepath) {
-                throw new Error('Upload succeeded but filepath was missing in response.');
-            }
-            updateProgress(50, 'Audio uploaded. Starting transcription & summarization...');
-
-            // Step 2: Call /transcribe with the filepath and user prompt
-            return fetch('/transcribe', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    filepath: uploadData.filepath,
-                    filename: uploadData.filename, // Pass filename for saving summary
-                    prompt: customPrompt.value // Get prompt from textarea
-                })
-            });
-        })
-        .then(transcribeResponse => {
-            if (!transcribeResponse.ok) {
-                // Try to parse error JSON, otherwise throw generic HTTP error
-                return transcribeResponse.json().then(err => {
-                    throw new Error(err.error || `Processing failed: ${transcribeResponse.status}`);
-                }).catch(() => {
-                    throw new Error(`Processing failed: ${transcribeResponse.status} ${transcribeResponse.statusText}`);
-                });
-            }
-            return transcribeResponse.json(); // Parse JSON response from /transcribe
-        })
         .then(data => {
-            // Processing complete, display results
+            // Combined processing complete, display results
             updateProgress(100, 'Processing complete.');
             loadingIndicator.classList.add('hidden');
-
-            // Check for application-level errors returned in the JSON (e.g., transcription blocked)
-            if (data.error) {
-                // Display error in summary area or dedicated error div
-                summaryText.innerHTML = `<p class="error">Error: ${data.error}</p>`;
-                transcriptionText.innerHTML = ''; // Clear transcription on error
-                promptDetailsContainer.classList.add('hidden'); // Keep prompts hidden on error
-                console.error('Processing error:', data.error);
-            } else {
-                // Display successful results
-                // Use textContent for security, or sanitize if HTML is needed
-                summaryText.textContent = data.summary || 'No summary generated.';
-                transcriptionText.textContent = data.transcription || 'No transcription available.';
-
-                // Populate and show prompt details
-                systemPromptText.textContent = data.system_prompt || 'System prompt not available.';
-                userMessageText.textContent = data.user_message || 'User message not available.';
-                promptDetailsContainer.classList.remove('hidden'); // Show the details dropdown
-
-                // Activate the summary tab by default
-                activateTab('summary');
-            }
-
-            // Show the results section regardless of success/error
             resultsSection.classList.remove('hidden');
             submitButton.disabled = false; // Re-enable button
-
+            console.log("TEMP: Received data from consolidated /upload:", data);
+            // Placeholder - actual display logic comes next
+            summaryText.textContent = JSON.stringify(data.summary || 'Summary pending...');
+            transcriptionText.textContent = JSON.stringify(data.transcript || 'Transcript pending...');
+            activateTab('summary');
         })
         .catch(error => {
-            // Handle network errors or errors thrown from .then blocks
+            // Handle network errors or errors thrown from .then blocks (including our custom throw)
             console.error('Error during processing:', error);
             loadingIndicator.classList.add('hidden');
             resultsSection.classList.remove('hidden'); // Show results section to display error
             summaryText.innerHTML = `<p class="error">An error occurred: ${error.message}. Please check the console or server logs.</p>`;
-            transcriptionText.innerHTML = '';
+            transcriptionText.innerText = error.transcript || ''; 
+            ragContextArea.classList.add('hidden');
             promptDetailsContainer.classList.add('hidden');
             submitButton.disabled = false; // Re-enable button
+            if (error.transcript) {
+                activateTab('transcription');
+            }
         });
     });
 
@@ -279,6 +255,55 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if(targetButton) targetButton.classList.add('active');
         if(targetPane) targetPane.classList.add('active');
+    }
+
+    // --- Fetch RAG Context --- 
+    function fetchRagContext(transcript) {
+        console.log("Fetching RAG context for transcript snippet:", transcript.substring(0, 100) + "...");
+        ragContextArea.classList.remove('hidden'); // Show the area
+        ragContextResults.innerHTML = '<p><i>Loading relevant context...</i></p>'; // Show loading state
+
+        fetch('/fetch_rag_context', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ transcript: transcript }), // Send full transcript
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => {
+                    throw new Error(err.error || `Failed to fetch context: ${response.status}`);
+                }).catch(() => {
+                     throw new Error(`Failed to fetch context: ${response.status} ${response.statusText}`);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log("RAG Context data received:", data);
+            ragContextResults.innerHTML = ''; // Clear loading state
+            if (data.error) {
+                 ragContextResults.innerHTML = `<p class="error">Error fetching context: ${data.error}</p>`;
+            } else if (data.context && data.context.length > 0) {
+                const list = document.createElement('ul');
+                data.context.forEach(item => {
+                    const listItem = document.createElement('li');
+                    const source = item.metadata && item.metadata.source ? item.metadata.source : 'Unknown source';
+                    // Display filename only from metadata
+                    const filename = source.split('/').pop(); // Get filename from path
+                    listItem.innerHTML = `<strong>Source:</strong> ${filename}<br> ${item.page_content}`;
+                    list.appendChild(listItem);
+                });
+                ragContextResults.appendChild(list);
+            } else {
+                ragContextResults.innerHTML = '<p><i>No relevant context found in notes.</i></p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching RAG context:', error);
+            ragContextResults.innerHTML = `<p class="error">Failed to load context: ${error.message}</p>`;
+        });
     }
 
     // --- RAG Status Indicator --- 

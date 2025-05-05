@@ -8,8 +8,8 @@ import subprocess
 import google.generativeai as genai
 from flask import Blueprint, render_template, request, jsonify, current_app, send_from_directory
 from werkzeug.utils import secure_filename
-from app.transcription import transcribe_audio
-from app.rag import query_rag_db
+from app.transcription import transcribe_audio, MODEL_NAME
+from app.rag import initialize_rag_db, query_rag_db 
 
 main_bp = Blueprint('main', __name__)
 
@@ -19,13 +19,10 @@ try:
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
     if gemini_api_key:
         genai.configure(api_key=gemini_api_key)
-        gemini_client_initialized = True
         logging.info("Gemini client configured.")
     else:
-        gemini_client_initialized = False
         logging.warning("GEMINI_API_KEY not found in environment. Gemini API will not be available.")
 except Exception as e:
-    gemini_client_initialized = False
     logging.error(f"Failed to configure Gemini API: {e}")
 
 def allowed_file(filename):
@@ -82,10 +79,111 @@ def load_external_context():
         current_app.logger.info("CONTEXT_INPUT_PATH not configured. Skipping external context.")
     return external_context
 
+# Internal helper to fetch RAG context
+def fetch_rag_context_internal(query_text, k=3):
+    """Queries the RAG DB and returns relevant documents."""
+    try:
+        rag_db_path = current_app.config['RAG_DB_PATH']
+        retriever = query_rag_db(query_text, rag_db_path, current_app.logger, n_results=k)
+        current_app.logger.info(f"Querying RAG DB internally for: '{query_text[:50]}...' with k={k}")
+        try:
+            results = retriever.invoke(query_text) # Use invoke for LCEL compatibility
+            current_app.logger.info(f"Found {len(results)} results from RAG DB via internal call.")
+            # Convert Document objects to JSON-serializable dicts immediately
+            serializable_results = [
+                {"page_content": doc.page_content, "metadata": doc.metadata}
+                for doc in results
+            ]
+            return serializable_results
+        except Exception as e:
+            current_app.logger.error(f"Error during internal RAG DB query: {e}", exc_info=True)
+            return [] # Return empty on error
+    except Exception as e:
+        current_app.logger.error(f"Error querying RAG database: {e}", exc_info=True)
+        return [] # Return empty on error
+
+# Internal helper for summarization
+def summarize_text(transcript, user_prompt):
+    """Generates a summary using transcript, context, and prompt."""
+    current_app.logger.info("Generating summary...")
+
+    # --- Load Contexts --- 
+    system_prompt_content = load_external_context()
+    business_context_content = get_saved_context().get('business_context', '')
+    saved_instructions_content = get_saved_context().get('custom_instructions', '')
+
+    # Combine static contexts for system instruction
+    combined_context_for_system = f"Business Context:\n{business_context_content}\n\nSaved Instructions:\n{saved_instructions_content}"
+    final_system_prompt = f"{system_prompt_content}\n\n{combined_context_for_system}"
+
+    # --- Fetch RAG Context --- 
+    rag_context_results = fetch_rag_context_internal(transcript) # Fetch based on full transcript
+    rag_info = ""
+    if rag_context_results:
+        rag_info = "\n\nRelevant Context from Notes (Retrieved Automatically):\n"
+        for i, doc_data in enumerate(rag_context_results):
+            source = doc_data['metadata'].get('source', 'Unknown source')
+            # Limit context length per document to avoid overly long prompts
+            content_snippet = doc_data['page_content'][:500] + ('...' if len(doc_data['page_content']) > 500 else '')
+            rag_info += f"- Source: {source}\n  Content: {content_snippet}\n"
+
+    # --- Assemble User Message --- 
+    user_message_content = (
+        f"Transcription:\n```\n{transcript}\n```\n{rag_info}\n\n" 
+        f"Please use the transcription, the retrieved context (if any), and the following specific instructions "
+        f"to generate a concise meeting summary:\n{user_prompt if user_prompt else 'Generate a standard meeting summary.'}"
+    )
+
+    # --- Call Gemini for Summarization --- 
+    try:
+        # Use a model suitable for summarization
+        summarizer_model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash-latest', # Or gemini-pro 
+            system_instruction=final_system_prompt
+        )
+
+        current_app.logger.debug(f"Summarizer - Final System Prompt: {final_system_prompt[:500]}...")
+        current_app.logger.debug(f"Summarizer - Final User Message: {user_message_content[:500]}...")
+
+        response = summarizer_model.generate_content(user_message_content)
+
+        # Improved response handling based on Gemini API structure
+        summary = "Summary generation failed."
+        if response.candidates:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                summary = ''.join(part.text for part in candidate.content.parts)
+                current_app.logger.info("Summary generated successfully.")
+            else:
+                # Check finish reason if parts are missing
+                finish_reason = candidate.finish_reason
+                current_app.logger.warning(f"Gemini summary generation issue. Finish Reason: {finish_reason}. Response: {response}")
+                summary = f"Summary generation failed or was empty (Finish Reason: {finish_reason})."
+                if finish_reason == genai.types.FinishReason.SAFETY:
+                    summary += " Content may have been blocked due to safety settings."
+                elif finish_reason == genai.types.FinishReason.RECITATION:
+                    summary += " Content may have been blocked due to potential recitation."
+                # Add other reasons if needed
+        else:
+            current_app.logger.error(f"Gemini summary response had no candidates. Response: {response}")
+
+        # Clean the summary by removing double quotes
+        cleaned_summary = summary.replace('"', '')
+
+        # Return cleaned summary, fetched rag context, and the prompts used
+        return cleaned_summary, rag_context_results, final_system_prompt, user_message_content
+
+    except Exception as e:
+        current_app.logger.error(f"Error during summarization: {e}", exc_info=True)
+        # Return error, fetched rag context, and prompts used
+        return f"Error during summarization: {str(e)}", rag_context_results, final_system_prompt, user_message_content
+
+
 @main_bp.route('/')
 def index():
     context = get_saved_context()
-    return render_template('index.html', business_context=context.get('business_context', ''), rag_status=current_app.config.get('RAG_STATUS', 'amber'))
+    rag_status = current_app.config.get('RAG_STATUS', 'unknown') 
+    return render_template('index.html', business_context=context.get('business_context', ''), rag_status=rag_status)
 
 @main_bp.route('/save_context', methods=['POST'])
 def save_context_route():
@@ -110,57 +208,83 @@ def save_context_route():
 
 @main_bp.route('/upload', methods=['POST'])
 def upload():
-    current_app.logger.info(f"--- Entered /upload route ---")
-    current_app.logger.info(f"Request Files: {request.files}")
-    current_app.logger.info(f"Request Form Data: {request.form}")
-    
+    current_app.logger.info("--- Entered /upload route ---")
     if 'file' not in request.files:
         current_app.logger.error("'/upload' request missing 'file' part.")
         return jsonify({'error': 'No file part'}), 400
 
     file = request.files['file']
-    user_prompt = request.form.get('user_prompt', '') 
-    current_app.logger.info(f"Received file: {file.filename}, User prompt: '{user_prompt}'")
+    user_prompt = request.form.get('user_prompt', '') # Get prompt from form data
+    current_app.logger.info(f"Request Files: {request.files}")
+    current_app.logger.info(f"Request Form Data: {request.form}")
 
     if file.filename == '':
+        current_app.logger.warning("'/upload' request received with no selected file.")
         return jsonify({'error': 'No selected file'}), 400
-        
+
     if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
+        # Secure filename and create unique ID
+        original_filename = secure_filename(file.filename)
         unique_id = uuid.uuid4().hex
-        base, ext = os.path.splitext(filename)
-        unique_filename = f"{base}_{unique_id}{ext}"
-        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], unique_filename)
-        transcript = None 
-        error_message = None
+        filename_base, file_ext = os.path.splitext(original_filename)
+        # Use unique ID in filename to prevent clashes and simplify cleanup
+        filename = f"{filename_base}_{unique_id}{file_ext}"
+        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+        current_app.logger.info(f"Received file: {original_filename}, User prompt: '{user_prompt}'")
+        current_app.logger.info(f"Saving uploaded file to: {file_path}")
+
+        transcript = None
+        summary = None
+        rag_context_results = []
+        system_prompt_used = ""
+        user_message_used = ""
 
         try:
-            current_app.logger.info(f"Saving uploaded file to: {file_path}")
+            # Ensure upload directory exists
+            os.makedirs(current_app.config['UPLOAD_FOLDER'], exist_ok=True)
             file.save(file_path)
-            current_app.logger.info(f"File saved successfully.")
+            current_app.logger.info("File saved successfully.")
 
+            # --- Step 1: Transcribe Audio --- 
             current_app.logger.info(f"Starting transcription for: {file_path}")
-            transcript = transcribe_audio(file_path) 
+            transcript = transcribe_audio(file_path)
 
             if transcript:
-                current_app.logger.info(f"Transcription successful for {unique_filename}")
+                current_app.logger.info(f"Transcription successful for {filename}")
                 
-                return jsonify({
-                    'message': 'File uploaded and transcribed successfully.',
-                    'filename': filename, 
+                # --- Step 2: Summarize Text (includes internal RAG fetch) --- 
+                summary, rag_context_results, system_prompt_used, user_message_used = summarize_text(transcript, user_prompt)
+
+                # Prepare response
+                response_data = {
                     'transcript': transcript,
-                }), 200
+                    'summary': summary,
+                    'rag_context': rag_context_results, # Already serializable
+                    'system_prompt': system_prompt_used,
+                    'user_message': user_message_used,
+                    'filename': filename # Keep filename for potential future use
+                }
+                return jsonify(response_data), 200
             else:
-                current_app.logger.error(f"Transcription failed for {unique_filename}. See transcription module logs.")
-                error_message = "Transcription failed. Check server logs for details."
-                return jsonify({'error': error_message, 'filename': filename}), 500
+                # Transcription failed
+                current_app.logger.error(f"Transcription failed for {filename}. See transcription module logs.")
+                # Return only transcript error
+                return jsonify({'error': 'Transcription failed.', 'transcript': None, 'summary': None}), 500
 
         except Exception as e:
-            current_app.logger.error(f"Error during upload/transcription process for {filename}: {e}", exc_info=True) 
+            current_app.logger.error(f"Error during upload/transcription/summarization process for {filename}: {e}", exc_info=True)
             error_message = f"An unexpected error occurred: {str(e)}"
-            return jsonify({'error': error_message, 'filename': filename}), 500
+            # Attempt to return partial results if transcription happened
+            return jsonify({ 
+                'error': error_message, 
+                'transcript': transcript, # May be None
+                'summary': None,
+                'rag_context': [],
+                'filename': filename
+            }), 500
         
         finally:
+            # --- Step 3: Clean up local file --- 
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
@@ -172,246 +296,23 @@ def upload():
         current_app.logger.warning(f"Upload rejected: File type not allowed for '{file.filename}'")
         return jsonify({'error': 'File type not allowed'}), 400
 
-@main_bp.route('/transcribe', methods=['POST'])
-def transcribe():
+@main_bp.route('/fetch_rag_context', methods=['POST'])
+def fetch_rag_context_route():
     data = request.get_json()
-    filename = data.get('filename')
-    user_prompt = data.get('prompt', '')
-    include_transcript = data.get('include_transcript', True)
-
-    if not filename:
-        return jsonify({'error': 'No filename provided'}), 400
-
-    local_file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
-
-    if not os.path.exists(local_file_path):
-        return jsonify({'error': 'Local file not found'}), 404
-
-    transcription = ""
-    summary = ""
-    gemini_file = None
+    transcript_snippet = data.get('transcript', '')[:500] # Use snippet for direct calls if needed
+    current_app.logger.info(f"--- Entered /fetch_rag_context route (Direct Call) ---")
+    current_app.logger.info(f"Querying RAG DB at {current_app.config['RAG_DB_PATH']} with transcript snippet: {transcript_snippet}...")
 
     try:
-        if not gemini_client_initialized:
-            raise ValueError("Gemini API client is not initialized. Check API Key.")
-        current_app.logger.info("Using Gemini API")
+        # Use the internal fetch function
+        results = fetch_rag_context_internal(transcript_snippet)
+        current_app.logger.info(f"Found {len(results)} relevant documents via direct call.")
+        # Results are already serializable
+        return jsonify({'context': results}) # Return structured data
 
-        mime_type, _ = mimetypes.guess_type(local_file_path)
-        if not mime_type:
-            file_ext = os.path.splitext(filename)[1].lower()
-            if file_ext == '.mp3': mime_type = 'audio/mpeg' 
-            elif file_ext == '.wav': mime_type = 'audio/wav'
-            elif file_ext == '.m4a': mime_type = 'audio/aac' 
-            elif file_ext == '.ogg': mime_type = 'audio/ogg' 
-            elif file_ext == '.flac': mime_type = 'audio/flac' 
-            else: 
-                raise ValueError(f"Could not determine MIME type for file: {filename}")
-            current_app.logger.warning(f"MIME type guessed as fallback: {mime_type}")
-        else:
-             current_app.logger.info(f"Guessed MIME type: {mime_type}")
-
-        current_app.logger.info(f"Uploading {filename} ({mime_type}) to Gemini...")
-        gemini_file = genai.upload_file(path=local_file_path, mime_type=mime_type)
-        current_app.logger.info(f"Uploaded Gemini file: {gemini_file.name}")
-
-        while gemini_file.state.name == "PROCESSING":
-            current_app.logger.info("Waiting for Gemini file processing...")
-            time.sleep(2) 
-            gemini_file = genai.get_file(gemini_file.name)
-
-        if gemini_file.state.name == "FAILED":
-            raise ValueError("Gemini file processing failed.")
-
-        transcription_model = genai.GenerativeModel('gemini-2.5-pro-preview-03-25') 
-        response = transcription_model.generate_content(
-            [f"Please transcribe this audio file accurately. Include speaker labels if possible (e.g., Speaker 1:, Speaker 2:).", gemini_file],
-            request_options={'timeout': 900} 
-        )
-        if response.candidates and response.candidates[0].content.parts:
-            transcription = response.candidates[0].content.parts[0].text
-        else:
-            current_app.logger.warning(f"Gemini transcription response did not contain expected text. Response: {response}")
-            finish_reason = response.candidates[0].finish_reason if response.candidates else 'UNKNOWN'
-            if finish_reason == 'SAFETY':
-                 transcription = "Transcription blocked due to safety settings."
-            elif finish_reason == 'RECITATION':
-                 transcription = "Transcription blocked due to potential recitation."
-            else:
-                transcription = f"Transcription failed or was empty (Finish Reason: {finish_reason})."
-
-        if not transcription:
-             current_app.logger.warning(f"Transcription returned None for {local_file_path}")
-             # Clean up uploaded file
-             if os.path.exists(local_file_path):
-                 os.remove(local_file_path)
-                 current_app.logger.info(f"Cleaned up uploaded file: {local_file_path}")
-             return jsonify({'error': 'Transcription failed (returned None). Check logs.'}), 500
-
-        # Check for transcription failure/blocking *before* attempting RAG/summarization
-        if transcription.startswith("Transcription blocked") or transcription.startswith("Transcription failed"):
-            current_app.logger.warning(f"Transcription issue for {local_file_path}: {transcription}")
-            # Clean up uploaded file
-            if os.path.exists(local_file_path):
-                os.remove(local_file_path)
-                current_app.logger.info(f"Cleaned up uploaded file: {local_file_path}")
-            # Return only the transcription error
-            return jsonify({'transcription': transcription, 'summary': 'Summarization skipped due to transcription issue.'}), 200 # Return 200 OK but indicate issue
-
-        # If transcription succeeded, proceed with RAG and Summarization
-        current_app.logger.info(f"Gemini transcription length: {len(transcription)}")
-        summary = "Summarization did not run or failed." # Default summary
-        output_filename = None # Default output filename
-
-        try: # Wrap RAG and Summarization in a try block
-            # --- RAG Integration ---
-            rag_context_string = "No relevant information found in knowledge base."
-            rag_db_path = current_app.config.get('RAG_DB_PATH')
-            rag_status = current_app.config.get('RAG_STATUS', 'amber')
-
-            if rag_status == 'green' and rag_db_path:
-                try:
-                    current_app.logger.info("Querying RAG database...")
-                    rag_results = query_rag_db(
-                        query_text=transcription, # Use transcription as query
-                        db_path=rag_db_path,
-                        logger=current_app.logger,
-                        n_results=3 # Fetch top 3 results
-                    )
-                    if rag_results:
-                        # Format results (assuming rag_results is a list of strings or Document objects)
-                        formatted_results = []
-                        for i, result in enumerate(rag_results):
-                            # Adjust formatting based on what query_rag_db returns
-                            if hasattr(result, 'page_content'): # Handle LangChain Document objects
-                                 source = result.metadata.get('source', 'Unknown source')
-                                 formatted_results.append(f"Source: {os.path.basename(source)}\nContent: {result.page_content}")
-                            elif isinstance(result, str):
-                                 formatted_results.append(result)
-                            else: # Fallback for unknown format
-                                 formatted_results.append(str(result))
-
-                        rag_context_string = "\n\n---\n\n".join(formatted_results)
-                        current_app.logger.info("Successfully retrieved context from RAG DB.")
-                    else:
-                        current_app.logger.info("RAG DB query returned no results.")
-                except Exception as rag_e:
-                    current_app.logger.error(f"Error querying RAG database: {rag_e}", exc_info=True)
-                    rag_context_string = "Error retrieving information from knowledge base."
-            elif rag_status != 'green':
-                 current_app.logger.warning(f"RAG DB status is '{rag_status}', skipping query.")
-                 rag_context_string = f"Knowledge base status: {rag_status}. Query skipped."
-            else:
-                 current_app.logger.warning("RAG DB path not configured, skipping query.")
-                 rag_context_string = "Knowledge base path not configured. Query skipped."
-            # --- End RAG Integration ---
-
-
-            # --- Build Summarization Prompt ---
-            context = get_saved_context()
-            business_context = context.get('business_context', '')
-            custom_instructions = context.get('custom_instructions', '')
-            external_context = load_external_context() 
-            system_prompt = f"""You are an AI assistant specialized in summarizing meeting transcripts based on provided business context, external documents, relevant knowledge base information, and instructions.
-            **Business Context:**
-            {business_context}
-
-            **External Context from Documents:**
-            {external_context if external_context else 'No external context provided.'}
-
-            **Relevant Information from Knowledge Base:**
-            {rag_context_string}
-
-            **Custom Instructions for Summarization:**
-            {custom_instructions}
-            """
-            user_message = f"""Please summarize the following meeting transcript accurately and concisely, following the provided instructions. Ensure the output uses basic markdown (like bolding key points **like this**, using italics *like this*, and potentially section headers ## Like This ## if appropriate).
-            **Transcript:**
-            {transcription}
-
-            **User's Specific Request for this summary:**
-            {user_prompt if user_prompt else '(No specific request provided, generate a standard concise summary following the custom instructions)'}
-            """
-            summary_model = genai.GenerativeModel('gemini-2.5-pro-preview-03-25', system_instruction=system_prompt)
-            summary_response = summary_model.generate_content(user_message)
-
-            if summary_response.candidates and summary_response.candidates[0].content.parts:
-                 summary = summary_response.candidates[0].content.parts[0].text
-            else:
-                current_app.logger.warning(f"Gemini summary response did not contain expected text. Response: {summary_response}")
-                finish_reason = summary_response.candidates[0].finish_reason if summary_response.candidates else 'UNKNOWN'
-                if finish_reason == 'SAFETY':
-                    summary = "Summary blocked due to safety settings."
-                elif finish_reason == 'RECITATION':
-                    summary = "Summary blocked due to potential recitation."
-                else:
-                    summary = f"Summarization failed or was empty (Finish Reason: {finish_reason})."
-            # --- End Call Summarization Model ---
-            current_app.logger.info("Gemini summarization complete.")
-
-            # --- Save Summary (Optional) ---
-            summary_output_path = current_app.config.get('SUMMARY_OUTPUT_PATH')
-
-            if summary_output_path and filename and not summary.startswith("Summary blocked") and not summary.startswith("Summarization failed"):
-                 if not os.path.exists(summary_output_path):
-                     os.makedirs(summary_output_path)
-                     current_app.logger.info(f"Created summary output directory: {summary_output_path}")
-                 base_filename = os.path.splitext(filename)[0]
-                 output_filename = os.path.join(summary_output_path, f"{base_filename}_summary_{uuid.uuid4()}.md")
-                 try:
-                     with open(output_filename, 'w', encoding='utf-8') as f:
-                         f.write(f"# Summary for: {filename}\n\n")
-                         f.write(summary)
-                     current_app.logger.info(f"Summary saved to: {output_filename}")
-                 except Exception as save_err:
-                     current_app.logger.error(f"Failed to save summary to {output_filename}: {save_err}")
-                     output_filename = None # Reset if save fails
-            elif not summary_output_path:
-                 current_app.logger.info("SUMMARY_OUTPUT_PATH not configured. Summary not saved to file.")
-            # --- End Save Summary ---
-
-        except Exception as process_err: # Catch errors during RAG/Summarization/Saving
-            current_app.logger.error(f"Error during RAG/Summarization/Saving: {process_err}", exc_info=True)
-            summary = "An error occurred during summarization processing. Check logs." # Update summary on error
-
-        # Clean up uploaded file (always happens after processing attempt)
-        if os.path.exists(local_file_path):
-            os.remove(local_file_path)
-            current_app.logger.info(f"Cleaned up uploaded file: {local_file_path}")
-
-        # Return successful transcription and the resulting summary (even if summary failed)
-        return jsonify({
-            'transcription': transcription,
-            'summary': summary,
-            'summary_filename': output_filename, # Return path if saved, else None
-            'system_prompt': system_prompt,   # Add system prompt to response
-            'user_message': user_message      # Add user message to response
-        })
-
-    except genai.APIError as e:
-        current_app.logger.error(f"Gemini API Error: {e}")
-        return jsonify({'error': f'Gemini API Error: {e}'}), 500
-    except ValueError as e:
-        current_app.logger.error(f"Value Error: {e}")
-        if "MIME type" in str(e) or "file processing failed" in str(e):
-             return jsonify({'error': f'File processing error: {e}'}), 400
-        return jsonify({'error': f'Configuration or Value Error: {e}'}), 500
     except Exception as e:
-        current_app.logger.error(f"An unexpected error occurred: {e}", exc_info=True)
-        return jsonify({'error': f'An unexpected error occurred: {e}'}), 500
-    finally:
-        if gemini_file:
-            try:
-                current_app.logger.info(f"Deleting Gemini file: {gemini_file.name}")
-                genai.delete_file(gemini_file.name)
-            except Exception as delete_error:
-                 current_app.logger.error(f"Error deleting Gemini file {gemini_file.name}: {delete_error}")
-
-        if os.path.exists(local_file_path):
-            try:
-                os.remove(local_file_path)
-                current_app.logger.info(f"Removed local file: {local_file_path}")
-            except Exception as remove_error:
-                current_app.logger.error(f"Error removing local file {local_file_path}: {remove_error}")
+        current_app.logger.error(f"Error querying RAG DB via direct call: {e}", exc_info=True)
+        return jsonify({'error': f'Error querying RAG DB: {str(e)}'}), 500
 
 @main_bp.route('/get_context', methods=['GET'])
 def get_context_route():

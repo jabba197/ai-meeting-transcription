@@ -1,11 +1,8 @@
 Flask
 Werkzeug
 Flask-WTF
-python-dotenv
 requests
 openai
-google-generativeai
-python-magic
 gunicorn
 Flask-Cors
 numpy
@@ -15,3 +12,15 @@ SoundFile
 # Removed version pins to allow uv to resolve dependencies
 # If you need specific versions, consider installing them in a separate environment
 # opensoundscape removed due to Python 3.12 incompatibility (via pathtools)
+# RAG system dependencies
+langchain>=0.0.235
+chromadb>=0.3.25
+sentence-transformers>=2.2.2
+unstructured>=0.6.0
+# Required by UnstructuredMarkdownLoader
+markdown
+google-generativeai
+python-dotenv
+langchain-huggingface # For HuggingFaceEmbeddings
+langchain-chroma # For Chroma vector store integration
+langchain-community # For document loaders like DirectoryLoader

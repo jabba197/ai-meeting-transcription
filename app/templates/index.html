@@ -10,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
+    <div class="rag-indicator {{ rag_status }}" title="RAG status: {{ rag_status }}"></div>
     <div class="container">
         <header>
             <h1>AI Meeting Transcription</h1>
@@ -32,11 +33,6 @@
                         <label for="custom-prompt">Specific Instructions for this Job (optional):</label>
                         <textarea id="custom-prompt" placeholder="E.g., 'Focus on action items' or 'Highlight key decisions'"></textarea>
                     </div>
-                    <!-- Add Transcript Toggle Checkbox -->
-                    <div class="toggle-container">
-                        <input type="checkbox" id="include-transcript-toggle" name="include_transcript" checked>
-                        <label for="include-transcript-toggle">Include Full Transcript in Output</label>
-                    </div>
                     <button type="submit" id="submit-btn" disabled>Generate Summary</button>
                 </form>
             </section>
@@ -53,6 +49,17 @@
                             <button id="copy-summary-btn" class="copy-button" title="Copy Summary">Copy</button>
                         </h3>
                         <div id="summary-text" class="result-text"></div>
+                        
+                        <!-- Add Prompt Details Dropdown -->
+                        <details class="prompt-details hidden" id="prompt-details-container">
+                            <summary>View Summarization Prompt</summary>
+                            <h4>System Prompt:</h4>
+                            <pre id="system-prompt-text"></pre>
+                            <h4>User Message (Transcript + Request):</h4>
+                            <pre id="user-message-text"></pre>
+                        </details>
+                        <!-- End Prompt Details Dropdown -->
+
                     </div>
                     <div id="transcription-content" class="tab-pane">
                         <h3>Full Transcription</h3>
@@ -69,6 +76,7 @@
                 <label for="saved-custom-instructions">Saved Custom Instructions:</label> 
                 <textarea id="saved-custom-instructions" rows="6" placeholder="General instructions for the AI summarizer, e.g., 'Always extract action items', 'Use bullet points', 'Summarize in under 200 words'"></textarea>
                 <button id="save-context-btn">Save Context Settings</button>
+                <span id="rag-status-indicator" class="status-indicator" title="RAG Database Status"></span>
             </section>
 
             <div id="loading" class="loading hidden">

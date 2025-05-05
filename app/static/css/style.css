@@ -120,12 +120,38 @@ button:hover {
 }
 
 button:disabled {
-    background-color: #a0a0a0;
+    background-color: #cccccc;
     cursor: not-allowed;
 }
 
-/* Results section */
-.results-section {
+/* --- Status Indicator --- */
+.status-indicator {
+    display: inline-block;
+    margin-left: 10px;
+    font-size: 1.2em; /* Adjust size as needed */
+    line-height: 1; /* Ensure dot aligns well vertically */
+    font-weight: bold;
+    vertical-align: middle; /* Align with button text */
+}
+
+.status-indicator.status-green {
+    color: #28a745; /* Green */
+}
+
+.status-indicator.status-amber {
+    color: #ffc107; /* Amber */
+}
+
+.status-indicator.status-red {
+    color: #dc3545; /* Red */
+}
+
+.status-indicator.status-unknown {
+    color: #6c757d; /* Grey */
+}
+
+/* --- Results Section --- */
+#results-section {
     display: block;
 }
 
@@ -251,6 +277,20 @@ button:disabled {
 .hidden {
     display: none !important;
 }
+
+/* RAG Status Indicator Styles */
+.rag-indicator {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    z-index: 1000;
+}
+.rag-indicator.green { background-color: #4caf50; }
+.rag-indicator.red { background-color: #f44336; }
+.rag-indicator.amber { background-color: #ffc107; }
 
 /* Footer */
 footer {

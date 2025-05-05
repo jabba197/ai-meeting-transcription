@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const customPrompt = document.getElementById('custom-prompt'); 
     const resultsSection = document.getElementById('results-section');
     const summaryText = document.getElementById('summary-text');
+    const transcriptionText = document.getElementById('transcription-text'); // Add reference for transcript display
     const tabButtons = document.querySelectorAll('.tab-btn');
     const summaryTabButton = document.querySelector('.tab-btn[data-tab="summary"]');
     const tabPanes = document.querySelectorAll('.tab-pane');
@@ -17,6 +18,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedCustomInstructions = document.getElementById('saved-custom-instructions');
     const saveContextButton = document.getElementById('save-context-btn');
     const copySummaryButton = document.getElementById('copy-summary-btn'); 
+    const ragStatusIndicator = document.getElementById('rag-status-indicator'); // Get status indicator element
+    const promptDetailsContainer = document.getElementById('prompt-details-container'); // New element
+    const systemPromptText = document.getElementById('system-prompt-text'); // New element
+    const userMessageText = document.getElementById('user-message-text'); // New element
 
     // --- Context Loading --- 
     function loadContext() {
@@ -31,12 +36,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data) {
                     businessContext.value = data.business_context || '';
                     savedCustomInstructions.value = data.custom_instructions || '';
+                    // Update RAG status indicator
+                    updateRagStatusIndicator(data.rag_status || 'unknown'); 
                 } else {
                      console.warn('Could not load context or context is empty.');
                 }
             })
             .catch(error => {
                 console.error('Error loading context:', error);
+                // Update status to unknown or error state on failure
+                updateRagStatusIndicator('unknown'); 
                 alert('Could not load saved context settings. ' + error.message);
             });
     }
@@ -160,79 +169,154 @@ document.addEventListener('DOMContentLoaded', function() {
         submitButton.disabled = true; 
         resultsSection.classList.add('hidden'); 
         summaryText.innerHTML = ''; 
+        transcriptionText.innerHTML = ''; // Also clear transcription text
+        promptDetailsContainer.classList.add('hidden'); // Hide prompt details initially
 
-        // Create FormData and append both the file and the user prompt
-        const formData = new FormData();
-        formData.append('file', audioFileInput.files[0]); // Ensure key matches Flask ('file')
-        formData.append('user_prompt', customPrompt.value); // Add user prompt
+        // Create FormData for upload
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', audioFileInput.files[0]); // Ensure key matches Flask ('file')
+        uploadFormData.append('user_prompt', customPrompt.value); // Add user prompt
 
-        updateProgress(10, 'Uploading and processing audio...');
+        updateProgress(10, 'Uploading audio...');
 
-        // Single fetch call to the updated /upload endpoint
+        // Step 1: Upload the file
         fetch('/upload', {
             method: 'POST',
-            body: formData // Send FormData directly
+            body: uploadFormData // Send FormData directly
         })
         .then(response => {
-             // Check if the response is OK (status 200-299)
              if (!response.ok) {
-                 // Try to parse the error JSON, otherwise throw generic HTTP error
-                 return response.json().then(err => { 
-                     throw new Error(err.error || `Server error: ${response.status}`);
-                 }).catch(() => { // Handle cases where response is not JSON (e.g., HTML error page)
-                     throw new Error(`Server error: ${response.status} ${response.statusText}`);
+                 // Try to parse error JSON, otherwise throw generic HTTP error
+                 return response.json().then(err => {
+                     throw new Error(err.error || `Upload failed: ${response.status}`);
+                 }).catch(() => {
+                     throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
                  });
              }
              return response.json(); // Parse the JSON response from /upload
         })
+        .then(uploadData => {
+            if (!uploadData.filepath) {
+                throw new Error('Upload succeeded but filepath was missing in response.');
+            }
+            updateProgress(50, 'Audio uploaded. Starting transcription & summarization...');
+
+            // Step 2: Call /transcribe with the filepath and user prompt
+            return fetch('/transcribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filepath: uploadData.filepath,
+                    filename: uploadData.filename, // Pass filename for saving summary
+                    prompt: customPrompt.value // Get prompt from textarea
+                })
+            });
+        })
+        .then(transcribeResponse => {
+            if (!transcribeResponse.ok) {
+                // Try to parse error JSON, otherwise throw generic HTTP error
+                return transcribeResponse.json().then(err => {
+                    throw new Error(err.error || `Processing failed: ${transcribeResponse.status}`);
+                }).catch(() => {
+                    throw new Error(`Processing failed: ${transcribeResponse.status} ${transcribeResponse.statusText}`);
+                });
+            }
+            return transcribeResponse.json(); // Parse JSON response from /transcribe
+        })
         .then(data => {
-            // This block now receives the final summary data directly
-            updateProgress(95, 'Processing complete.');
-            // Hide loading indicator
+            // Processing complete, display results
+            updateProgress(100, 'Processing complete.');
             loadingIndicator.classList.add('hidden');
 
-            // Check for application-level errors returned in the JSON
+            // Check for application-level errors returned in the JSON (e.g., transcription blocked)
             if (data.error) {
-                throw new Error(data.error);
-            }
-
-            // Display the summary
-            resultsSection.classList.remove('hidden');
-            if (typeof marked === 'undefined') {
-                console.error('marked.js library not found. Markdown rendering disabled.');
-                summaryText.textContent = data.summary || 'No summary was generated.';
+                // Display error in summary area or dedicated error div
+                summaryText.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                transcriptionText.innerHTML = ''; // Clear transcription on error
+                promptDetailsContainer.classList.add('hidden'); // Keep prompts hidden on error
+                console.error('Processing error:', data.error);
             } else {
-                 try {
-                     // Sanitize potentially harmful HTML before parsing Markdown
-                     // Basic sanitization example (consider a more robust library like DOMPurify if needed)
-                     const sanitizedMarkdown = (data.summary || 'No summary was generated.').replace(/<script.*?>.*?<\/script>/gi, '');
-                     summaryText.innerHTML = marked.parse(sanitizedMarkdown);
-                 } catch (markdownError) {
-                     console.error('Error parsing Markdown:', markdownError);
-                     summaryText.textContent = data.summary || 'No summary was generated (Markdown parsing failed).';
-                 }
+                // Display successful results
+                // Use textContent for security, or sanitize if HTML is needed
+                summaryText.textContent = data.summary || 'No summary generated.';
+                transcriptionText.textContent = data.transcription || 'No transcription available.';
+
+                // Populate and show prompt details
+                systemPromptText.textContent = data.system_prompt || 'System prompt not available.';
+                userMessageText.textContent = data.user_message || 'User message not available.';
+                promptDetailsContainer.classList.remove('hidden'); // Show the details dropdown
+
+                // Activate the summary tab by default
+                activateTab('summary');
             }
 
-            // Update progress to 100%
-             updateProgress(100, 'Done!');
+            // Show the results section regardless of success/error
+            resultsSection.classList.remove('hidden');
+            submitButton.disabled = false; // Re-enable button
+
         })
         .catch(error => {
-            console.error('Error during upload/summarization:', error);
-            // Hide loading indicator
+            // Handle network errors or errors thrown from .then blocks
+            console.error('Error during processing:', error);
             loadingIndicator.classList.add('hidden');
-            // Show error message prominently
-            summaryText.innerHTML = `<p class="error-message"><strong>Error:</strong> ${error.message || 'An unknown error occurred.'}</p>`;
-            resultsSection.classList.remove('hidden');
-            // Reset progress bar on error
-             updateProgress(0, 'Error');
-        })
-        .finally(() => {
-             // Re-enable the submit button regardless of success or failure
-             submitButton.disabled = false; 
-             // Clear the file input for the next upload
-             // audioFileInput.value = ''; // Optional: uncomment to clear file input after processing
-             // fileNameDisplay.textContent = 'Choose File'; // Optional: uncomment to reset file name display
+            resultsSection.classList.remove('hidden'); // Show results section to display error
+            summaryText.innerHTML = `<p class="error">An error occurred: ${error.message}. Please check the console or server logs.</p>`;
+            transcriptionText.innerHTML = '';
+            promptDetailsContainer.classList.add('hidden');
+            submitButton.disabled = false; // Re-enable button
         });
     });
 
-});
+    // Helper function to activate a specific tab
+    function activateTab(tabName) {
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabPanes.forEach(pane => pane.classList.remove('active'));
+        
+        const targetButton = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+        const targetPane = document.getElementById(`${tabName}-content`);
+        
+        if(targetButton) targetButton.classList.add('active');
+        if(targetPane) targetPane.classList.add('active');
+    }
+
+    // --- RAG Status Indicator --- 
+    function updateRagStatusIndicator(status) {
+        if (!ragStatusIndicator) return; // Guard clause if element not found
+
+        ragStatusIndicator.classList.remove('status-green', 'status-amber', 'status-red', 'status-unknown');
+        let statusText = '';
+        let statusTitle = 'RAG Database Status: ';
+
+        switch (status) {
+            case 'green':
+                ragStatusIndicator.classList.add('status-green');
+                statusText = '●'; // Green dot
+                statusTitle += 'Ready';
+                break;
+            case 'amber':
+                ragStatusIndicator.classList.add('status-amber');
+                statusText = '●'; // Amber dot
+                statusTitle += 'Initializing / Not Configured';
+                break;
+            case 'red':
+                ragStatusIndicator.classList.add('status-red');
+                statusText = '●'; // Red dot
+                statusTitle += 'Error';
+                break;
+            default: // unknown or other
+                ragStatusIndicator.classList.add('status-unknown');
+                statusText = '?'; // Question mark
+                statusTitle += 'Unknown';
+                break;
+        }
+        ragStatusIndicator.textContent = statusText;
+        ragStatusIndicator.title = statusTitle;
+    }
+
+    // Re-enable submit button after successful context load (or initial state)
+    // This might need adjustment based on when context is truly needed
+    submitButton.disabled = false;
+
+}); // End of DOMContentLoaded

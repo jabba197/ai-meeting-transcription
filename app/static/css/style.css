@@ -190,6 +190,23 @@ button:disabled {
     display: block;
 }
 
+.result-box {
+    background-color: #f8f9fa; /* Light grey, Bootstrap's bg-light equivalent */
+    border: 1px solid #dee2e6; /* Bootstrap's border equivalent */
+    border-radius: 0.25rem; /* Bootstrap's rounded equivalent */
+    padding: 1rem; /* Bootstrap's p-3 equivalent */
+    margin-bottom: 1rem;
+    word-wrap: break-word; /* Ensure long words/strings wrap */
+    overflow-wrap: break-word; /* Alternative for word-wrap */
+    white-space: pre-wrap; /* Preserve newlines and spaces, wrap text */
+    max-height: 400px; /* Set a max height */
+    overflow-y: auto; /* Add scrollbar if content exceeds max height */
+}
+
+.result-box-small {
+    background-color: #f8f9fa;
+}
+
 .result-text {
     white-space: pre-wrap;
     line-height: 1.7;

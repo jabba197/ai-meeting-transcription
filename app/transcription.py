@@ -4,7 +4,7 @@ import logging
 import mimetypes
 import google.generativeai as genai
 from dotenv import load_dotenv
-from typing import Union, Optional
+from typing import Union, Tuple, Optional
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -27,8 +27,12 @@ else:
         logger.error(f"Failed to configure Gemini API: {e}", exc_info=True)
         _gemini_configured = False # Ensure flag is false on error
 
-# --- Model Configuration ---
-MODEL_NAME = "gemini-2.5-pro-preview-05-06"  # Standardized model name
+# --- Model Names --- #
+MODEL_NAME = 'gemini-2.5-flash-preview-04-17'  # For transcription
+RAG_KEYWORD_MODEL_NAME = 'gemini-2.5-flash-preview-04-17' # For RAG keyword generation
+MULTIMODAL_SUMMARY_MODEL_NAME = 'gemini-2.5-pro-preview-05-06' # For multimodal summarization
+
+# --- Constants --- 
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
 
@@ -69,7 +73,7 @@ def get_mime_type(file_path: str) -> Optional[str]:
     # For now, let's be explicit if we can't map it to an audio/* type we know.
     return None # Or potentially mime_type if we want to try generic ones
 
-def transcribe_audio(audio_file_path: str) -> Union[str, None]:
+def transcribe_audio(audio_file_path: str) -> Tuple[Union[str, None], float, str]:
     """
     Transcribes the given audio file using the Gemini API.
 
@@ -77,30 +81,32 @@ def transcribe_audio(audio_file_path: str) -> Union[str, None]:
         audio_file_path: The path to the audio file.
 
     Returns:
-        The transcript text, or None if transcription fails.
+        A tuple containing:
+            - The transcript text (str) or None if transcription fails.
+            - Time taken for transcription in seconds (float).
+            - The model name used for transcription (str).
     """
     # Check if Gemini was configured successfully
     if not _gemini_configured:
         logger.error("Transcription failed: Gemini API is not configured (check API key and logs).")
-        return None
+        return None, 0.0, MODEL_NAME
 
     logger.info(f"Attempting to transcribe audio file: {audio_file_path}")
     if not os.path.exists(audio_file_path):
         logger.error(f"Audio file not found at {audio_file_path}")
-        return None
+        return None, 0.0, MODEL_NAME
 
     final_mime_type = get_mime_type(audio_file_path)
 
     if not final_mime_type:
         logger.error(f"Unsupported audio file format or unable to determine MIME type for {audio_file_path}. Please use one of the supported formats: {', '.join(SUPPORTED_AUDIO_FORMATS.keys())}")
-        # It might be better to raise an error here if a MIME type is strictly required
-        # and cannot be inferred by the API.
-        # For now, returning None to indicate failure.
-        return None
+        return None, 0.0, MODEL_NAME
 
     logger.info(f"Uploading {audio_file_path} with MIME type: {final_mime_type}")
 
     uploaded_file = None # Initialize to None
+    transcription_start_time = time.time()
+
     try:
         logger.info(f"Uploading audio file: {audio_file_path}...")
         uploaded_file = genai.upload_file(path=audio_file_path, mime_type=final_mime_type)
@@ -122,7 +128,7 @@ def transcribe_audio(audio_file_path: str) -> Union[str, None]:
                 genai.delete_file(uploaded_file.name)
             except Exception as delete_error:
                 logger.error(f"Error deleting failed file: {delete_error}")
-            return None
+            return None, round(time.time() - transcription_start_time, 2), MODEL_NAME
 
         logger.info(f"Audio file ready: {uploaded_file.name}")
 
@@ -151,11 +157,11 @@ def transcribe_audio(audio_file_path: str) -> Union[str, None]:
             # Remove double quotes from the transcript before returning
             final_transcript = transcript.replace('"', '')
             logger.info("Transcription successful.")
-            return final_transcript
+            return final_transcript, round(time.time() - transcription_start_time, 2), MODEL_NAME
         else:
             logger.error("No transcription content found in response candidates.")
             logger.debug(f"Full transcription response: {response}")
-            return None
+            return None, round(time.time() - transcription_start_time, 2), MODEL_NAME
 
     except Exception as e:
         logger.error(f"An error occurred during transcription: {e}", exc_info=True)
@@ -166,7 +172,7 @@ def transcribe_audio(audio_file_path: str) -> Union[str, None]:
                 genai.delete_file(uploaded_file.name)
             except Exception as delete_error:
                 logger.error(f"Error deleting file during error cleanup: {delete_error}")
-        return None
+        return None, round(time.time() - transcription_start_time, 2), MODEL_NAME
 
 if __name__ == '__main__':
     # Example usage setup
@@ -179,13 +185,15 @@ if __name__ == '__main__':
     elif os.path.exists(test_audio_path):
         logger.info(f"\nRunning test transcription for: {test_audio_path}")
         start_time = time.time()
-        transcript_result = transcribe_audio(test_audio_path)
+        transcript_result, time_taken, model_name = transcribe_audio(test_audio_path)
         end_time = time.time()
         logger.info(f"Transcription process took {end_time - start_time:.2f} seconds.")
 
         if transcript_result:
             logger.info("\n--- Transcript ---")
             logger.info(f"Transcript result: {transcript_result}")
+            logger.info(f"Time taken: {time_taken} seconds")
+            logger.info(f"Model name: {model_name}")
             logger.info("--- End Transcript ---")
         else:
             logger.info("\nTranscription failed (check logs for details).")

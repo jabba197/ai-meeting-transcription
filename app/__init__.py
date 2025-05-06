@@ -42,8 +42,7 @@ def create_app():
     app.config['CONTEXT_INPUT_PATH'] = os.environ.get('CONTEXT_INPUT_PATH')   # Load context input path
 
     # Configure RAG DB path and initialize status indicator
-    project_root = os.path.dirname(app.root_path)
-    rag_db_path = os.path.join(project_root, 'rag_db')
+    rag_db_path = os.path.join(app.root_path, 'rag_db') # Corrected: rag_db is inside app folder
     app.config['RAG_DB_PATH'] = rag_db_path
     vault_path = app.config.get('CONTEXT_INPUT_PATH')
     

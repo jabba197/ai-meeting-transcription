@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Meeting Transcription</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <!-- Include marked.js for Markdown rendering -->
@@ -20,18 +22,17 @@
         <main>
             <section class="upload-section">
                 <h2>Upload Audio</h2>
-                <form id="upload-form">
+                <form id="uploadForm"> 
                     <div class="file-input-container">
-                        <label for="audio-file" class="file-input-label">
-                            <span id="file-name">Choose File</span>
+                        <label for="audio_file" class="file-input-label">
+                            <span id="file-name">Choose File Browse</span>
                             <span class="browse-btn">Browse</span>
                         </label>
-                        <input type="file" id="audio-file" accept=".mp3,.wav,.ogg,.m4a,.flac,.mp4,.mpeg,.mpga" hidden>
+                        <input type="file" id="audio_file" name="audio_file" accept="audio/*" style="display: none;">
                     </div>
-                    
                     <div class="prompt-container">
                         <label for="custom-prompt">Specific Instructions for this Job (optional):</label>
-                        <textarea id="custom-prompt" placeholder="E.g., 'Focus on action items' or 'Highlight key decisions'"></textarea>
+                        <textarea id="custom-prompt" name="prompt" placeholder="E.g., 'Focus on action items' or 'Highlight key decisions'"></textarea>
                     </div>
                     <button type="submit" id="submit-btn" disabled>Generate Summary</button>
                 </form>
@@ -48,7 +49,7 @@
                             Meeting Summary
                             <button id="copy-summary-btn" class="copy-button" title="Copy Summary">Copy</button>
                         </h3>
-                        <div id="summary-text" class="result-text"></div>
+                        <div id="summary-text-tab" class="result-text"></div>
                         
                         <!-- Add Prompt Details Dropdown -->
                         <details class="prompt-details hidden" id="prompt-details-container">
@@ -63,7 +64,7 @@
                     </div>
                     <div id="transcription-content" class="tab-pane">
                         <h3>Full Transcription</h3>
-                        <div id="transcription-text" class="result-text"></div>
+                        <div id="transcription-text-tab" class="result-text"></div>
 
                         <!-- RAG Context Area -->
                         <div id="rag-context-area" class="rag-context hidden">
@@ -94,6 +95,46 @@
                 <p id="progress-status">Processing...</p>
                 <div class="spinner"></div>
                 <p>Processing your audio... This might take a few minutes</p>
+            </div>
+
+            <!-- Progress Bar -->
+            <div id="progress-container" class="mt-4" style="display: none;">
+                <div class="progress">
+                    <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                </div>
+                <p id="progress-stage-message" class="mt-2 text-center"></p> 
+            </div>
+
+            <!-- Results Section -->
+            <div id="results-container" class="mt-5" style="display: none;">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h4><i class="fas fa-file-alt"></i> Transcript</h4>
+                        <div id="transcript-text" class="result-box p-3 border rounded bg-light"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <h4><i class="fas fa-lightbulb"></i> Summary</h4>
+                        <div id="summary-text" class="result-box p-3 border rounded bg-light"></div>
+                    </div>
+                </div>
+
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <h4><i class="fas fa-cogs"></i> Processing Details</h4>
+                        <div id="model-info-display" class="result-box-small p-2 border rounded bg-light mb-2"></div>
+                        <div id="rag-context-display" class="result-box-small p-2 border rounded bg-light mb-2"></div>
+                        <div id="prompts-display" class="result-box-small p-2 border rounded bg-light mb-2"></div>
+                        <div id="timings-display" class="result-box-small p-2 border rounded bg-light"></div>
+                    </div>
+                </div>
+
+                <!-- Share Buttons -->
+                <div id="share-buttons-container" class="mt-4 text-center" style="display: none;">
+                    <h5>Share Summary:</h5>
+                    <a id="share-twitter" href="#" class="btn btn-info btn-sm" target="_blank"><i class="fab fa-twitter"></i> Twitter</a>
+                    <a id="share-linkedin" href="#" class="btn btn-primary btn-sm" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+                    <a id="share-email" href="#" class="btn btn-secondary btn-sm"><i class="fas fa-envelope"></i> Email</a>
+                </div>
             </div>
         </main>
 

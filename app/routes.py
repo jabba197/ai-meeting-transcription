@@ -107,7 +107,9 @@ def fetch_rag_context_internal(query_text, k=10):
         return [] # Return empty on error
 
 # New helper function to generate RAG keywords
-def generate_rag_keywords(transcript_text: str, logger: logging.Logger) -> tuple[str | None, str]:
+from typing import Optional, Tuple
+
+def generate_rag_keywords(transcript_text: str, logger: logging.Logger) -> Tuple[Optional[str], str]:
     """
     Generates keywords/queries from transcript text for RAG lookup using Gemini Flash.
     Returns a tuple: (keywords_string, model_name).
@@ -156,7 +158,7 @@ def summarize_multimodal_audio_and_text(
     user_prompt: str, 
     rag_context_results: list, # Expects list of dicts from fetch_rag_context_internal
     logger: logging.Logger
-) -> tuple[str | None, str | None, str | None, str | None]:
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
     Generates a summary using the original audio, RAG context, and user prompt 
     with a multimodal Gemini model.

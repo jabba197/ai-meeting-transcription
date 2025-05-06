@@ -28,8 +28,8 @@ else:
         _gemini_configured = False # Ensure flag is false on error
 
 # --- Model Names --- #
-MODEL_NAME = 'gemini-2.5-flash-preview-04-17'  # For transcription
-RAG_KEYWORD_MODEL_NAME = 'gemini-2.5-flash-preview-04-17' # For RAG keyword generation
+MODEL_NAME = 'gemini-2.0-flash'  # For transcription
+RAG_KEYWORD_MODEL_NAME = 'gemini-2.0-flash' # For RAG keyword generation
 MULTIMODAL_SUMMARY_MODEL_NAME = 'gemini-2.5-pro-preview-05-06' # For multimodal summarization
 
 # --- Constants --- 

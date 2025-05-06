@@ -113,7 +113,7 @@ def generate_rag_keywords(transcript_text: str, logger: logging.Logger) -> tuple
     Returns a tuple: (keywords_string, model_name).
     Returns (None, model_name) on error.
     """
-    MODEL_NAME = "gemini-2.5-flash-preview-04-17"
+    MODEL_NAME = "gemini-2.0-flash"
     logger.info(f"Generating RAG keywords using {MODEL_NAME}...")
     try:
         model = genai.GenerativeModel(MODEL_NAME)
@@ -212,11 +212,26 @@ def summarize_multimodal_audio_and_text(
             content_snippet = doc_data['page_content'][:500] + ('...' if len(doc_data['page_content']) > 500 else '')
             rag_info_string += f"- Source: {source}\n  Content: {content_snippet}\n"
 
+    # Extract and clean up the file name to use as meeting title
+    file_name = os.path.basename(audio_file_path)
+    # Remove file extension and any UUID prefixes if present
+    meeting_title = file_name
+    if '_' in meeting_title and meeting_title.count('_') >= 1:
+        # Try to remove UUID prefix if it exists (pattern like: def52f945d2a422fab5001ebe85e549a_Meeting_Name.m4a)
+        parts = meeting_title.split('_', 1)
+        if len(parts[0]) > 30:  # Likely a UUID
+            meeting_title = parts[1]
+    # Remove file extension
+    meeting_title = os.path.splitext(meeting_title)[0]
+    # Replace underscores with spaces
+    meeting_title = meeting_title.replace('_', ' ')
+
     prompt_parts = [
         audio_file_part,
-        f"Based on the provided audio recording and the following retrieved context (if any), "
+        f"Based on the provided audio recording titled \"{meeting_title}\" and the following retrieved context (if any), "
         f"please fulfill the user's request.\n"
         f"{rag_info_string}\n\n"
+        f"Meeting Title: {meeting_title}\n\n"
         f"User's Request: {user_prompt if user_prompt else 'Generate a standard meeting summary.'}"
     ]
     
@@ -268,6 +283,45 @@ def summarize_multimodal_audio_and_text(
             except Exception as del_e:
                 logger.warning(f"Could not delete uploaded audio file {audio_file_part.name} from Gemini: {del_e}")
 
+def save_summary_to_markdown(summary, meeting_title, original_filename, timestamp, rag_keywords=None, logger=None):
+    """Save the meeting summary as a markdown file in the SUMMARY_OUTPUT_PATH directory."""
+    summary_output_path = current_app.config.get('SUMMARY_OUTPUT_PATH')
+    if not summary_output_path:
+        logger.warning("SUMMARY_OUTPUT_PATH not set, skipping summary markdown file creation")
+        return None
+        
+    try:
+        # Create the directory if it doesn't exist
+        if not os.path.exists(summary_output_path):
+            os.makedirs(summary_output_path)
+            logger.info(f"Created SUMMARY_OUTPUT_PATH directory: {summary_output_path}")
+
+        # Format the filename with timestamp for uniqueness
+        clean_title = meeting_title.replace(' ', '_').replace('/', '-').replace('\\', '-')
+        markdown_filename = f"{timestamp}_{clean_title}.md"
+        markdown_filepath = os.path.join(summary_output_path, markdown_filename)
+        
+        # Create the markdown content
+        content = [f"# Meeting Summary: {meeting_title}\n"]
+        content.append(f"*Created:* {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}\n")
+        content.append(f"*Source File:* {original_filename}\n")
+        
+        if rag_keywords:
+            content.append(f"*Keywords:* {rag_keywords}\n")
+            
+        content.append("## Summary\n")
+        content.append(f"{summary}\n")
+        
+        # Write the markdown file
+        with open(markdown_filepath, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(content))
+        
+        logger.info(f"Successfully saved summary to markdown file: {markdown_filepath}")
+        return markdown_filepath
+    except Exception as e:
+        logger.error(f"Error saving summary to markdown file: {e}", exc_info=True)
+        return None
+
 def generate_task_events(task_id, user_prompt_from_query):
     logger = current_app.logger
     task_info = tasks_in_progress.get(task_id)
@@ -296,7 +350,14 @@ def generate_task_events(task_id, user_prompt_from_query):
         yield f"data: {json.dumps({'stage': 'Transcribing audio...', 'progress_percent': 10})}\n\n"
         logger.info(f"Task {task_id}: Starting transcription for {original_filename}")
         transcription_result, trans_time, trans_model_name = transcribe_audio(filepath)
-        if transcription_result is None or (isinstance(transcription_result, str) and "error" in transcription_result.lower()):
+        
+        # Better error detection - check for None result or if it's a short string starting with 'Error:'
+        is_error = (transcription_result is None or 
+                   (isinstance(transcription_result, str) and 
+                    len(transcription_result) < 1000 and 
+                    transcription_result.strip().lower().startswith(('error:', 'an error'))))
+        
+        if is_error:
             error_message = transcription_result if transcription_result else "Transcription failed due to an unknown error."
             logger.error(f"Task {task_id}: Transcription failed for {original_filename}. Reason: {error_message}")
             yield f"data: {json.dumps({'error': error_message, 'progress_percent': 100, 'stage': 'Transcription Error'})}\n\n"
@@ -385,8 +446,38 @@ def generate_task_events(task_id, user_prompt_from_query):
             'progress_percent': 100, # Ensure this is set for the final payload
             'stage': 'Processing complete!' # Ensure this is set for the final payload
         }
+        
+        # Save summary to markdown file
+        if summary_result and not "error" in summary_result.lower():
+            timestamp = int(time.time())
+            # Extract meeting title from filename, consistent with how it's done in summarize_multimodal_audio_and_text
+            file_name = os.path.basename(filepath)
+            meeting_title = file_name
+            # Try to remove UUID prefix if it exists
+            if '_' in meeting_title and meeting_title.count('_') >= 1:
+                parts = meeting_title.split('_', 1)
+                if len(parts[0]) > 30:  # Likely a UUID
+                    meeting_title = parts[1]
+            # Remove file extension
+            meeting_title = os.path.splitext(meeting_title)[0]
+            # Replace underscores with spaces for a more readable title
+            meeting_title = meeting_title.replace('_', ' ')
+            
+            logger.info(f"Saving summary for meeting: {meeting_title}")
+            markdown_path = save_summary_to_markdown(
+                summary_result, 
+                meeting_title, 
+                original_filename, 
+                timestamp, 
+                rag_keywords, 
+                logger
+            )
+            if markdown_path:
+                final_data['summary_markdown_path'] = markdown_path
+                logger.info(f"Added summary markdown path to response: {markdown_path}")
+        
         yield f"data: {json.dumps(final_data)}\n\n"
-        logger.info(f"Task {task_id}: Successfully processed and sent final result for {original_filename}.")
+        logger.info(f"Task {task_id}: Successfully processed and sent final result for {original_filename}.")    
 
     except Exception as e:
         logger.error(f"Unhandled error during SSE generation for task {task_id}: {e}", exc_info=True)

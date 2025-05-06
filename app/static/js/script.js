@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     const uploadForm = document.getElementById('uploadForm');
-    const progressBar = document.getElementById('progress-bar');
+    const progressBar = document.getElementById('main-progress-bar');
     const progressContainer = document.getElementById('progress-container');
     const progressStageMessage = document.getElementById('progress-stage-message'); 
 
@@ -141,6 +141,19 @@ document.addEventListener('DOMContentLoaded', function () {
                         resultsContainer.style.display = 'block';
                         transcriptDiv.innerHTML = data.transcript ? marked.parse(data.transcript) : 'No transcript provided.';
                         summaryDiv.innerHTML = data.summary ? marked.parse(data.summary) : 'No summary provided.';
+
+                        // Show notification if summary was saved as markdown
+                        if (data.summary_markdown_path) {
+                            // Create notification at the top of the summary
+                            const savedNotification = document.createElement('div');
+                            savedNotification.className = 'alert alert-success';
+                            savedNotification.innerHTML = `<strong>Success!</strong> Meeting summary has been saved as a markdown file in your Obsidian vault.`;
+                            
+                            // Insert at the beginning of the summary section
+                            if (summaryDiv.parentNode) {
+                                summaryDiv.parentNode.insertBefore(savedNotification, summaryDiv);
+                            }
+                        }
 
                         // Display RAG context if available
                         if (ragContextDiv) {

@@ -3,6 +3,7 @@ import time
 import logging
 import google.generativeai as genai
 from dotenv import load_dotenv
+from typing import Union
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ else:
 # Model selection (using latest flash model)
 MODEL_NAME = "models/gemini-2.5-flash-preview-04-17"
 
-def transcribe_audio(audio_file_path: str) -> str | None:
+def transcribe_audio(audio_file_path: str) -> Union[str, None]:
     """
     Transcribes the given audio file using the Gemini API.
 

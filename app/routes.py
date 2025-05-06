@@ -80,7 +80,7 @@ def load_external_context():
     return external_context
 
 # Internal helper to fetch RAG context
-def fetch_rag_context_internal(query_text, k=3):
+def fetch_rag_context_internal(query_text, k=10):
     """Queries the RAG DB and returns relevant documents."""
     try:
         rag_db_path = current_app.config['RAG_DB_PATH']
@@ -138,7 +138,7 @@ def summarize_text(transcript, user_prompt):
     try:
         # Use a model suitable for summarization
         summarizer_model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash-latest', # Or gemini-pro 
+            model_name='gemini-2.5-pro-exp-03-25', # Or gemini-pro 
             system_instruction=final_system_prompt
         )
 

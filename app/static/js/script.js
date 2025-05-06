@@ -225,8 +225,8 @@ document.addEventListener('DOMContentLoaded', function() {
             submitButton.disabled = false; // Re-enable button
             console.log("TEMP: Received data from consolidated /upload:", data);
             // Placeholder - actual display logic comes next
-            summaryText.textContent = JSON.stringify(data.summary || 'Summary pending...');
-            transcriptionText.textContent = JSON.stringify(data.transcript || 'Transcript pending...');
+            summaryText.innerHTML = marked.parse(data.summary || '');
+            transcriptionText.innerHTML = marked.parse(data.transcript || '');
             activateTab('summary');
         })
         .catch(error => {
@@ -235,7 +235,7 @@ document.addEventListener('DOMContentLoaded', function() {
             loadingIndicator.classList.add('hidden');
             resultsSection.classList.remove('hidden'); // Show results section to display error
             summaryText.innerHTML = `<p class="error">An error occurred: ${error.message}. Please check the console or server logs.</p>`;
-            transcriptionText.innerText = error.transcript || ''; 
+            transcriptionText.innerHTML = marked.parse(error.transcript || ''); 
             ragContextArea.classList.add('hidden');
             promptDetailsContainer.classList.add('hidden');
             submitButton.disabled = false; // Re-enable button

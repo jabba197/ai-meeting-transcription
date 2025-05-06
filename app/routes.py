@@ -138,7 +138,7 @@ def summarize_text(transcript, user_prompt):
     try:
         # Use a model suitable for summarization
         summarizer_model = genai.GenerativeModel(
-            model_name='gemini-2.5-pro-exp-03-25', # Or gemini-pro 
+            model_name='gemini-2.5-pro-preview-05-06', # Or gemini-pro 
             system_instruction=final_system_prompt
         )
 

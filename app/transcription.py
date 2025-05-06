@@ -1,9 +1,10 @@
 import os
 import time
 import logging
+import mimetypes
 import google.generativeai as genai
 from dotenv import load_dotenv
-from typing import Union
+from typing import Union, Optional
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -26,8 +27,47 @@ else:
         logger.error(f"Failed to configure Gemini API: {e}", exc_info=True)
         _gemini_configured = False # Ensure flag is false on error
 
-# Model selection (using latest flash model)
-MODEL_NAME = "models/gemini-2.5-flash-preview-04-17"
+# --- Model Configuration ---
+MODEL_NAME = "gemini-2.5-pro-preview-05-06"  # Standardized model name
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # seconds
+
+# --- Supported Audio Formats and MIME types ---
+# Supported audio formats based on https://ai.google.dev/gemini-api/docs/prompting_with_media#supported_file_formats
+# This list can be expanded as needed.
+SUPPORTED_AUDIO_FORMATS = {
+    ".aac": "audio/aac",
+    ".aiff": "audio/aiff",
+    ".flac": "audio/flac",
+    ".m4a": "audio/m4a",
+    ".mp3": "audio/mpeg", # Common MIME type for .mp3
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".wav": "audio/wav",
+}
+
+def get_mime_type(file_path: str) -> Optional[str]:
+    """Determine the MIME type of a file based on its extension or by guessing."""
+    _, ext = os.path.splitext(file_path)
+    ext = ext.lower()
+
+    # Check predefined supported formats first
+    if ext in SUPPORTED_AUDIO_FORMATS:
+        return SUPPORTED_AUDIO_FORMATS[ext]
+
+    # Fallback to mimetypes library if not in our predefined list
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type and mime_type.startswith("audio/"):
+        logging.info(f"Guessed MIME type for {file_path} ({ext}): {mime_type}")
+        return mime_type
+    
+    logging.warning(f"Could not determine a specific audio MIME type for {file_path} with extension {ext}. Fallback guess: {mime_type}")
+    # If mimetypes also fails to provide an audio/* type, or if it's a generic type like application/octet-stream
+    # it's better to return None and let the calling function decide or raise an error.
+    # However, for Gemini, even application/octet-stream might work if the underlying format is supported.
+    # For now, let's be explicit if we can't map it to an audio/* type we know.
+    return None # Or potentially mime_type if we want to try generic ones
 
 def transcribe_audio(audio_file_path: str) -> Union[str, None]:
     """
@@ -49,10 +89,21 @@ def transcribe_audio(audio_file_path: str) -> Union[str, None]:
         logger.error(f"Audio file not found at {audio_file_path}")
         return None
 
+    final_mime_type = get_mime_type(audio_file_path)
+
+    if not final_mime_type:
+        logger.error(f"Unsupported audio file format or unable to determine MIME type for {audio_file_path}. Please use one of the supported formats: {', '.join(SUPPORTED_AUDIO_FORMATS.keys())}")
+        # It might be better to raise an error here if a MIME type is strictly required
+        # and cannot be inferred by the API.
+        # For now, returning None to indicate failure.
+        return None
+
+    logger.info(f"Uploading {audio_file_path} with MIME type: {final_mime_type}")
+
     uploaded_file = None # Initialize to None
     try:
         logger.info(f"Uploading audio file: {audio_file_path}...")
-        uploaded_file = genai.upload_file(path=audio_file_path)
+        uploaded_file = genai.upload_file(path=audio_file_path, mime_type=final_mime_type)
         logger.info(f"Successfully uploaded audio file: {uploaded_file.name} - {uploaded_file.uri}")
         logger.debug(f"Initial file state: {uploaded_file.state.name}") # Use debug level
 
